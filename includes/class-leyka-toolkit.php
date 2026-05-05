@@ -44,11 +44,17 @@ class Leyka_Toolkit {
 
     public static function defaults() {
         return [
-            'enabled'     => 1,
-            'label'       => 'Подписаться на новости',
-            'checked'     => 0,
-            'tag'         => 'newsletter',
-            'log_enabled' => 0,
+            'enabled'                  => 1,
+            'label'                    => 'Подписаться на новости',
+            'checked'                  => 0,
+            'tag'                      => 'newsletter',
+            'log_enabled'              => 0,
+            'recurring_agree_enabled'  => 0,
+            'recurring_agree_required' => 1,
+            'recurring_agree_label'    => 'Я согласен на автоматическое ежемесячное списание',
+            'recurring_agree_hint'     => 'Вы можете отменить регулярное пожертвование в любой момент',
+            'recurring_agree_hint_url' => '',
+            'recurring_agree_tag'      => 'recurring-agree',
         ];
     }
 
@@ -98,18 +104,28 @@ class Leyka_Toolkit {
         // Render a temporary block near submit, then move its real checkbox nodes
         // into the native agreements block on DOM ready.
         $templates = apply_filters('leyka_toolkit_supported_templates', ['need-help', 'star', 'revo']);
+        $s = self::settings_data();
         foreach ($templates as $tpl) {
             add_filter(
                 'leyka_' . sanitize_key($tpl) . '_template_final_submit',
                 [$this, 'render_subscribe_block'],
                 5
             );
+
+            if (!empty($s['recurring_agree_enabled'])) {
+                add_filter(
+                    'leyka_' . sanitize_key($tpl) . '_template_final_submit',
+                    [$this, 'render_recurring_agree_block'],
+                    6
+                );
+            }
         }
 
         add_action('wp_enqueue_scripts', [$this, 'enqueue_front_assets']);
 
         // Save subscribe checkbox value and defer tag assignment.
         add_action('leyka_new_donation_added', [$this, 'handle_subscribe'], 20, 1);
+        add_action('leyka_new_donation_added', [$this, 'handle_recurring_agree'], 20, 1);
 
         // Assign donor tag when donation becomes funded (callback from payment gateway).
         add_action('transition_post_status', [$this, 'on_donation_funded'], 9999, 3);
@@ -160,16 +176,39 @@ class Leyka_Toolkit {
             return $defaults;
         }
 
+        $current = get_option(self::OPTION_KEY, []);
+        if (!is_array($current)) {
+            $current = [];
+        }
+
         $output = [];
-        $output['enabled']     = empty($input['enabled']) ? 0 : 1;
-        $output['checked']     = empty($input['checked']) ? 0 : 1;
-        $output['log_enabled'] = empty($input['log_enabled']) ? 0 : 1;
+        $output['enabled']                  = empty($input['enabled']) ? 0 : 1;
+        $output['checked']                  = empty($input['checked']) ? 0 : 1;
+        $output['log_enabled']              = array_key_exists('log_enabled', $input)
+            ? (empty($input['log_enabled']) ? 0 : 1)
+            : (empty($current['log_enabled']) ? 0 : 1);
+        $output['recurring_agree_enabled']  = empty($input['recurring_agree_enabled']) ? 0 : 1;
+        $output['recurring_agree_required'] = empty($input['recurring_agree_required']) ? 0 : 1;
 
         $label = isset($input['label']) ? sanitize_text_field(wp_unslash($input['label'])) : $defaults['label'];
         $output['label'] = $label !== '' ? $label : $defaults['label'];
 
         $tag = isset($input['tag']) ? sanitize_key(wp_unslash($input['tag'])) : $defaults['tag'];
         $output['tag'] = $tag !== '' ? $tag : $defaults['tag'];
+
+        $recurring_tag = isset($input['recurring_agree_tag']) ? sanitize_key(wp_unslash($input['recurring_agree_tag'])) : $defaults['recurring_agree_tag'];
+        $output['recurring_agree_tag'] = $recurring_tag !== '' ? $recurring_tag : $defaults['recurring_agree_tag'];
+
+        $recurring_label = isset($input['recurring_agree_label']) ? sanitize_text_field(wp_unslash($input['recurring_agree_label'])) : $defaults['recurring_agree_label'];
+        $output['recurring_agree_label'] = $recurring_label !== '' ? $recurring_label : $defaults['recurring_agree_label'];
+
+        $output['recurring_agree_hint'] = isset($input['recurring_agree_hint'])
+            ? sanitize_text_field(wp_unslash($input['recurring_agree_hint']))
+            : '';
+
+        $output['recurring_agree_hint_url'] = isset($input['recurring_agree_hint_url'])
+            ? esc_url_raw(wp_unslash($input['recurring_agree_hint_url']))
+            : '';
 
         self::$settings_cache = null;
         return $output;
@@ -184,10 +223,12 @@ class Leyka_Toolkit {
         ?>
         <div class="wrap">
             <h1>Leyka Toolkit</h1>
-            <p>Версия 0.2.0</p>
+            <p>Версия <?php echo esc_html(LEYKA_TOOLKIT_VERSION); ?></p>
 
             <form method="post" action="options.php">
                 <?php settings_fields('leyka_toolkit_group'); ?>
+
+                <h2>Подписка на новости</h2>
 
                 <table class="form-table" role="presentation">
                     <tbody>
@@ -223,6 +264,63 @@ class Leyka_Toolkit {
                             <td>
                                 <input type="text" class="regular-text" name="<?php echo esc_attr(self::OPTION_KEY); ?>[tag]" value="<?php echo esc_attr($s['tag']); ?>">
                                 <p class="description">Добавляется донору после успешного пожертвования с отмеченным чекбоксом.</p>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <h2>Согласие на ежемесячное списание</h2>
+
+                <table class="form-table" role="presentation">
+                    <tbody>
+                        <tr>
+                            <th scope="row">Включить чекбокс</th>
+                            <td>
+                                <label>
+                                    <input type="checkbox" name="<?php echo esc_attr(self::OPTION_KEY); ?>[recurring_agree_enabled]" value="1" <?php checked(!empty($s['recurring_agree_enabled'])); ?>>
+                                    Да
+                                </label>
+                            </td>
+                        </tr>
+
+                        <tr>
+                            <th scope="row">Обязательная галка</th>
+                            <td>
+                                <label>
+                                    <input type="checkbox" name="<?php echo esc_attr(self::OPTION_KEY); ?>[recurring_agree_required]" value="1" <?php checked(!empty($s['recurring_agree_required'])); ?>>
+                                    Да
+                                </label>
+                                <p class="description">Если отмечено, донор не сможет отправить рекуррентную форму без согласия.</p>
+                            </td>
+                        </tr>
+
+                        <tr>
+                            <th scope="row">Текст чекбокса</th>
+                            <td>
+                                <input type="text" class="regular-text" name="<?php echo esc_attr(self::OPTION_KEY); ?>[recurring_agree_label]" value="<?php echo esc_attr($s['recurring_agree_label']); ?>">
+                            </td>
+                        </tr>
+
+                        <tr>
+                            <th scope="row">Текст подсказки</th>
+                            <td>
+                                <input type="text" class="regular-text" name="<?php echo esc_attr(self::OPTION_KEY); ?>[recurring_agree_hint]" value="<?php echo esc_attr($s['recurring_agree_hint']); ?>">
+                            </td>
+                        </tr>
+
+                        <tr>
+                            <th scope="row">Ссылка «Как отменить»</th>
+                            <td>
+                                <input type="url" class="regular-text" name="<?php echo esc_attr(self::OPTION_KEY); ?>[recurring_agree_hint_url]" value="<?php echo esc_attr($s['recurring_agree_hint_url']); ?>">
+                                <p class="description">Если не заполнено — ссылка не выводится.</p>
+                            </td>
+                        </tr>
+
+                        <tr>
+                            <th scope="row">Метка донора</th>
+                            <td>
+                                <input type="text" class="regular-text" name="<?php echo esc_attr(self::OPTION_KEY); ?>[recurring_agree_tag]" value="<?php echo esc_attr($s['recurring_agree_tag']); ?>">
+                                <p class="description">Добавляется донору после успешного пожертвования с отмеченным согласием на рекуррент.</p>
                             </td>
                         </tr>
                     </tbody>
@@ -264,7 +362,10 @@ class Leyka_Toolkit {
         $log_content = '';
         $file = self::get_log_file();
         if (file_exists($file)) {
-            $log_content = file_get_contents($file);
+            $lines = file($file);
+            if ($lines) {
+                $log_content = implode('', array_slice($lines, -500));
+            }
         }
         ?>
         <div class="wrap">
@@ -318,7 +419,7 @@ class Leyka_Toolkit {
 <div class="donor__oferta studioavp-leyka-addon-subscribe" aria-hidden="true">
     <span class="studioavp-leyka-addon-subscribe-inner">
         <input type="checkbox" name="leyka_donor_subscribed" id="' . esc_attr($field_id) . '" value="1"' . $checked . '>
-        <label for="' . esc_attr($field_id) . '">
+        <label for="' . esc_attr($field_id) . '" class="studioavp-leyka-addon-subscribe-label">
             <svg class="svg-icon icon-checkbox-check"><use xlink:href="#icon-checkbox-check"></use></svg>
             ' . esc_html($s['label']) . '
         </label>
@@ -328,13 +429,52 @@ class Leyka_Toolkit {
         return $block . $html;
     }
 
+    public function render_recurring_agree_block($html) {
+        $s = self::settings_data();
+
+        if (empty($s['recurring_agree_enabled'])) {
+            return $html;
+        }
+
+        self::$render_count++;
+        $field_id = 'leyka-toolkit-recurring-' . self::$render_count;
+        $required = !empty($s['recurring_agree_required']) ? '1' : '0';
+
+        $hint = '';
+        if (!empty($s['recurring_agree_hint']) || !empty($s['recurring_agree_hint_url'])) {
+            $hint = '
+<div class="studioavp-lt-recurring-hint" aria-hidden="true">
+    ' . esc_html($s['recurring_agree_hint']);
+
+            if (!empty($s['recurring_agree_hint_url'])) {
+                $hint .= ' <a href="' . esc_url($s['recurring_agree_hint_url']) . '">подробнее</a>';
+            }
+
+            $hint .= '
+</div>';
+        }
+
+        $block = '
+<div class="donor__oferta studioavp-lt-recurring-agree" aria-hidden="true" data-required="' . esc_attr($required) . '">
+    <span class="studioavp-lt-recurring-agree-inner">
+        <input type="checkbox" name="leyka_recurring_agreed" id="' . esc_attr($field_id) . '" value="1" class="leyka_agree">
+        <label for="' . esc_attr($field_id) . '" class="studioavp-lt-recurring-agree-label">
+            <svg class="svg-icon icon-checkbox-check"><use xlink:href="#icon-checkbox-check"></use></svg>
+            ' . esc_html($s['recurring_agree_label']) . '
+        </label>
+    </span>
+</div>';
+
+        return $block . $html . $hint;
+    }
+
     public function enqueue_front_assets() {
         if (is_admin()) {
             return;
         }
 
         $s = self::settings_data();
-        if (empty($s['enabled'])) {
+        if (empty($s['enabled']) && empty($s['recurring_agree_enabled'])) {
             return;
         }
 
@@ -342,18 +482,18 @@ class Leyka_Toolkit {
         wp_register_script('leyka-toolkit-front', '', $deps, LEYKA_TOOLKIT_VERSION, true);
         wp_enqueue_script('leyka-toolkit-front');
 
-        $js = <<<JS
-document.addEventListener('DOMContentLoaded', function () {
-    var blocks = document.querySelectorAll('.studioavp-leyka-addon-subscribe');
-    if (!blocks.length) return;
+        $js_parts = [];
 
+        if (!empty($s['enabled'])) {
+            $js_parts[] = <<<'JS'
+    var blocks = document.querySelectorAll('.studioavp-leyka-addon-subscribe');
     blocks.forEach(function (block) {
         var form = block.closest('form');
         if (!form) return;
 
         var agreementSpan = form.querySelector('[data-leyka-toolkit-target="subscribe"]')
             || form.querySelector('.section__fields.agreements .donor__oferta span')
-            || form.querySelector('.donor__oferta:not(.studioavp-leyka-addon-subscribe) span');
+            || form.querySelector('.donor__oferta:not(.studioavp-leyka-addon-subscribe):not(.studioavp-lt-recurring-agree) span');
         var inner = block.querySelector('.studioavp-leyka-addon-subscribe-inner');
 
         if (!agreementSpan || !inner) {
@@ -368,19 +508,298 @@ document.addEventListener('DOMContentLoaded', function () {
 
         block.parentNode.removeChild(block);
     });
-});
 JS;
+        }
+
+        if (!empty($s['recurring_agree_enabled'])) {
+            $js_parts[] = <<<'JS'
+    var recurringBlocks = document.querySelectorAll('.studioavp-lt-recurring-agree');
+    recurringBlocks.forEach(function (block) {
+        var form = block.closest('form');
+        if (!form) return;
+
+        var holder = block;
+        var holderDisplay = 'block';
+        var targetSpan = form.querySelector('[data-leyka-toolkit-target="recurring"]')
+            || form.querySelector('.section__fields.agreements .donor__oferta span')
+            || form.querySelector('.donor__oferta:not(.studioavp-lt-recurring-agree):not(.studioavp-leyka-addon-subscribe) span');
+        var inner = block.querySelector('.studioavp-lt-recurring-agree-inner');
+
+        if (targetSpan && inner) {
+            var subscribeInput = targetSpan.querySelector('[name="leyka_donor_subscribed"]');
+            inner.style.display = 'contents';
+            if (subscribeInput) {
+                targetSpan.insertBefore(inner, subscribeInput);
+            } else {
+                targetSpan.appendChild(inner);
+            }
+            block.parentNode.removeChild(block);
+            holder = inner;
+            holderDisplay = 'contents';
+        }
+
+        var isRequired = block.getAttribute('data-required') === '1';
+        var submitBtn = form.querySelector('input[type="submit"], button[type="submit"]');
+
+        function showRecurringError() {
+            if (holder.querySelector('.studioavp-lt-recurring-error')) {
+                if (typeof holder.scrollIntoView === 'function') {
+                    holder.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }
+                return;
+            }
+
+            var err = document.createElement('div');
+            err.className = 'studioavp-lt-recurring-error';
+            err.setAttribute('role', 'alert');
+            err.style.cssText = 'color:#e74c3c;font-size:13px;margin-top:4px;';
+            err.textContent = 'Необходимо ваше согласие';
+            holder.appendChild(err);
+
+            if (typeof holder.scrollIntoView === 'function') {
+                holder.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }
+        }
+
+        function removeRecurringError() {
+            var err = holder.querySelector('.studioavp-lt-recurring-error');
+            if (err) {
+                err.remove();
+            }
+        }
+
+        function shouldBlockRecurringSubmit() {
+            if (!isRequired) return false;
+
+            var agreeInput = form.querySelector('[name="leyka_recurring_agreed"]');
+            if (!agreeInput) return false;
+
+            var currentDisplay = holder.style.display;
+            var isVisible = currentDisplay !== 'none' && currentDisplay !== '';
+            if (currentDisplay === '') {
+                isVisible = getComputedStyle(holder).display !== 'none';
+            }
+
+            isVisible = isVisible && getComputedStyle(agreeInput).display !== 'none';
+            return isVisible && !agreeInput.checked;
+        }
+
+        function lockSubmitButton() {
+            if (submitBtn) {
+                submitBtn.setAttribute('disabled', 'disabled');
+            }
+        }
+
+        function triggerLeykaValidation() {
+            var emailInput = form.querySelector('[name="leyka_donor_email"]');
+            if (!emailInput) return;
+
+            emailInput.dispatchEvent(new Event('input', { bubbles: true }));
+            emailInput.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+
+        function syncRecurringAgree(checked) {
+            var agreeInput = form.querySelector('[name="leyka_recurring_agreed"]');
+            var hintBlock = form.querySelector('.studioavp-lt-recurring-hint');
+            var agreeHolder = holder;
+
+            if (!agreeInput || !agreeHolder) return;
+
+            if (checked) {
+                agreeHolder.style.setProperty('display', holderDisplay, 'important');
+                agreeHolder.setAttribute('aria-hidden', 'false');
+                if (hintBlock) {
+                    hintBlock.style.setProperty('display', 'block', 'important');
+                    hintBlock.setAttribute('aria-hidden', 'false');
+                }
+                if (shouldBlockRecurringSubmit()) {
+                    lockSubmitButton();
+                }
+            } else {
+                agreeHolder.style.setProperty('display', 'none', 'important');
+                agreeHolder.setAttribute('aria-hidden', 'true');
+                agreeInput.checked = false;
+                removeRecurringError();
+                if (hintBlock) {
+                    hintBlock.style.setProperty('display', 'none', 'important');
+                    hintBlock.setAttribute('aria-hidden', 'true');
+                }
+                triggerLeykaValidation();
+            }
+        }
+
+        if (isRequired && submitBtn && typeof MutationObserver !== 'undefined') {
+            var observer = new MutationObserver(function (mutations) {
+                mutations.forEach(function (mutation) {
+                    if (mutation.attributeName !== 'disabled') return;
+
+                    var isNowEnabled = !submitBtn.hasAttribute('disabled');
+                    if (isNowEnabled && shouldBlockRecurringSubmit()) {
+                        lockSubmitButton();
+                    }
+                });
+            });
+            observer.observe(submitBtn, { attributes: true, attributeFilter: ['disabled'] });
+        }
+
+        if (isRequired && submitBtn) {
+            submitBtn.addEventListener('click', function (event) {
+                if (shouldBlockRecurringSubmit()) {
+                    event.preventDefault();
+                    event.stopImmediatePropagation();
+                    showRecurringError();
+                }
+            }, true);
+        }
+
+        if (isRequired) {
+            form.addEventListener('submit', function (event) {
+                if (shouldBlockRecurringSubmit()) {
+                    event.preventDefault();
+                    event.stopImmediatePropagation();
+                    showRecurringError();
+                }
+            }, true);
+
+            var agreeInputRef = form.querySelector('[name="leyka_recurring_agreed"]');
+            if (agreeInputRef) {
+                agreeInputRef.addEventListener('change', function () {
+                    removeRecurringError();
+                    if (this.checked) {
+                        triggerLeykaValidation();
+                    } else if (shouldBlockRecurringSubmit()) {
+                        lockSubmitButton();
+                    }
+                });
+            }
+
+            if (typeof HTMLFormElement !== 'undefined' && HTMLFormElement.prototype.submit) {
+                var nativeSubmit = HTMLFormElement.prototype.submit;
+                form.submit = function () {
+                    if (shouldBlockRecurringSubmit()) {
+                        showRecurringError();
+                        return false;
+                    }
+
+                    return nativeSubmit.call(form);
+                };
+            }
+        }
+
+        var recurringCb = form.querySelector('input.leyka-recurring');
+        if (recurringCb) {
+            syncRecurringAgree(recurringCb.checked);
+            recurringCb.addEventListener('change', function () {
+                syncRecurringAgree(this.checked);
+            });
+            return;
+        }
+
+        var recurringInput = form.querySelector('input[name="leyka_recurring"]');
+        var periodicityLinks = form.querySelectorAll('[data-periodicity]');
+
+        if (!recurringInput || !periodicityLinks.length) return;
+
+        syncRecurringAgree(recurringInput.value === '1');
+
+        periodicityLinks.forEach(function (link) {
+            link.addEventListener('click', function () {
+                setTimeout(function () {
+                    syncRecurringAgree(recurringInput.value === '1');
+                }, 0);
+            });
+        });
+    });
+JS;
+        }
+
+        $js = "document.addEventListener('DOMContentLoaded', function () {\n" . implode("\n\n", $js_parts) . "\n});";
         wp_add_inline_script('leyka-toolkit-front', $js);
 
         wp_register_style('leyka-toolkit-front', false, [], LEYKA_TOOLKIT_VERSION);
         wp_enqueue_style('leyka-toolkit-front');
 
-        $css = <<<CSS
+        $css_parts = [];
+
+        if (!empty($s['enabled'])) {
+            $css_parts[] = <<<CSS
 .studioavp-leyka-addon-subscribe{
     display:none !important;
 }
+.studioavp-leyka-addon-subscribe-label,
+.leyka-tpl-star-form .section .section__fields .donor__oferta .studioavp-leyka-addon-subscribe-label,
+.leyka-screen-form .section .section__fields .donor__oferta .studioavp-leyka-addon-subscribe-label{
+    margin-top: 14px;
+    margin-bottom: 0;
+}
 CSS;
+        }
+
+        if (!empty($s['recurring_agree_enabled'])) {
+            $css_parts[] = <<<CSS
+.studioavp-lt-recurring-agree{
+    display: none !important;
+}
+.studioavp-lt-recurring-agree-label,
+.leyka-tpl-star-form .section .section__fields .donor__oferta .studioavp-lt-recurring-agree-label,
+.leyka-screen-form .section .section__fields .donor__oferta .studioavp-lt-recurring-agree-label{
+    margin-top: 14px;
+    margin-bottom: 0;
+}
+.studioavp-lt-recurring-hint{
+    display: none !important;
+    text-align: center;
+    font-size: 13px;
+    color: var(--leyka-need-help-color-text-light, #666666);
+    margin-top: 12px;
+    padding: 0;
+}
+CSS;
+        }
+
+        $css = implode("\n", $css_parts);
         wp_add_inline_style('leyka-toolkit-front', $css);
+    }
+
+    public function handle_recurring_agree($donation_id) {
+        if (empty($_POST['leyka_recurring_agreed'])) {
+            return;
+        }
+
+        $s = self::settings_data();
+        if (empty($s['recurring_agree_enabled'])) {
+            return;
+        }
+
+        update_post_meta((int) $donation_id, 'leyka_recurring_agreed', 1);
+        self::log('handle_recurring_agree: meta saved, donation_id=' . $donation_id);
+
+        $donor_email = '';
+        if (function_exists('leyka_get_donation')) {
+            $donation = leyka_get_donation((int) $donation_id);
+            if ($donation) {
+                $donor_email = !empty($donation->donor_email) ? $donation->donor_email : '';
+                self::log('handle_recurring_agree: donation email=' . $donor_email);
+            }
+        }
+
+        if (!$donor_email) {
+            $donor_email = get_post_meta((int) $donation_id, 'leyka_donor_email', true);
+            self::log('handle_recurring_agree: email from meta=' . $donor_email);
+        }
+
+        if (!$donor_email) {
+            self::log('handle_recurring_agree: exit — no donor email');
+            return;
+        }
+
+        $tag = !empty($s['recurring_agree_tag']) ? $s['recurring_agree_tag'] : 'recurring-agree';
+
+        add_action('shutdown', function () use ($donor_email, $tag) {
+            self::assign_donor_tag($donor_email, $tag);
+        });
+
+        self::log('handle_recurring_agree: deferred tag, email=' . $donor_email . ', tag=' . $tag);
     }
 
     public function handle_subscribe($donation_id) {
@@ -405,9 +824,8 @@ CSS;
         if (function_exists('leyka_get_donation')) {
             $donation = leyka_get_donation((int) $donation_id);
             if ($donation) {
-                $donation->donor_subscribed = 1;
                 $donor_email = !empty($donation->donor_email) ? $donation->donor_email : '';
-                self::log('handle_subscribe: donation object updated, email=' . $donor_email);
+                self::log('handle_subscribe: donation found, email=' . $donor_email);
             }
         }
 
@@ -442,17 +860,13 @@ CSS;
         }
 
         $donation_id = $post->ID;
-        $subscribed = get_post_meta($donation_id, 'leyka_donor_subscribed', true);
-
-        if (empty($subscribed)) {
-            return;
-        }
-
-        self::log('on_donation_funded: donation #' . $donation_id . ' funded, subscribed=1');
-
         $s = self::settings_data();
-        if (empty($s['enabled'])) {
-            self::log('on_donation_funded: exit — plugin disabled');
+        $subscribed = get_post_meta($donation_id, 'leyka_donor_subscribed', true);
+        $recurring_agreed = get_post_meta($donation_id, 'leyka_recurring_agreed', true);
+        $should_assign_subscribe = !empty($subscribed) && !empty($s['enabled']);
+        $should_assign_recurring = !empty($recurring_agreed) && !empty($s['recurring_agree_enabled']);
+
+        if (!$should_assign_subscribe && !$should_assign_recurring) {
             return;
         }
 
@@ -462,14 +876,30 @@ CSS;
             return;
         }
 
-        $tag = !empty($s['tag']) ? $s['tag'] : 'newsletter';
+        if ($should_assign_subscribe) {
+            self::log('on_donation_funded: donation #' . $donation_id . ' funded, subscribed=1');
 
-        // Defer to shutdown — Leyka may create WP user later in this request.
-        add_action('shutdown', function () use ($donor_email, $tag) {
-            self::assign_donor_tag($donor_email, $tag);
-        });
+            $tag = !empty($s['tag']) ? $s['tag'] : 'newsletter';
 
-        self::log('on_donation_funded: deferred to shutdown, email=' . $donor_email);
+            // Defer to shutdown — Leyka may create WP user later in this request.
+            add_action('shutdown', function () use ($donor_email, $tag) {
+                self::assign_donor_tag($donor_email, $tag);
+            });
+
+            self::log('on_donation_funded: subscribed tag deferred, email=' . $donor_email);
+        }
+
+        if ($should_assign_recurring) {
+            self::log('on_donation_funded: donation #' . $donation_id . ' funded, recurring_agreed=1');
+
+            $tag = !empty($s['recurring_agree_tag']) ? $s['recurring_agree_tag'] : 'recurring-agree';
+
+            add_action('shutdown', function () use ($donor_email, $tag) {
+                self::assign_donor_tag($donor_email, $tag);
+            });
+
+            self::log('on_donation_funded: recurring tag deferred, email=' . $donor_email);
+        }
     }
 
     public static function assign_donor_tag($donor_email, $tag) {
@@ -487,28 +917,8 @@ CSS;
             self::log('assign_donor_tag: found WP user #' . $donor_id);
         }
 
-        // Strategy 2: leyka_donor post by meta (if post type exists).
-        if (!$donor_id && post_type_exists('leyka_donor')) {
-            $donors = get_posts([
-                'post_type'      => 'leyka_donor',
-                'post_status'    => 'any',
-                'numberposts'    => 1,
-                'meta_query'     => [
-                    [
-                        'key'     => 'donor_email',
-                        'value'   => $donor_email,
-                        'compare' => '=',
-                    ],
-                ],
-            ]);
-            if (!empty($donors)) {
-                $donor_id = (int) $donors[0]->ID;
-                self::log('assign_donor_tag: found leyka_donor post #' . $donor_id);
-            }
-        }
-
         if (!$donor_id) {
-            self::log('assign_donor_tag: exit — donor not found (no WP user, no leyka_donor post)');
+            self::log('assign_donor_tag: exit — donor not found');
             return;
         }
         self::log('assign_donor_tag: donor found, id=' . $donor_id);

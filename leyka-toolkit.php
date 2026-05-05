@@ -2,7 +2,7 @@
 /*
 Plugin Name: Leyka Toolkit
 Description: Extensions for Leyka.
-Version: 0.2.0
+Version: 0.3.12
 Author: StudioAVP
 Text Domain: leyka-toolkit
 */
@@ -11,7 +11,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('LEYKA_TOOLKIT_VERSION', '0.2.0');
+define('LEYKA_TOOLKIT_VERSION', '0.3.12');
 define('LEYKA_TOOLKIT_FILE', __FILE__);
 define('LEYKA_TOOLKIT_PATH', plugin_dir_path(__FILE__));
 
