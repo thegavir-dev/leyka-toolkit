@@ -19,10 +19,39 @@ class Leyka_Toolkit {
     }
 
     public static function activate() {
+        global $wp_version;
+
+        if (version_compare(PHP_VERSION, LEYKA_TOOLKIT_MIN_PHP_VERSION, '<')) {
+            deactivate_plugins(plugin_basename(LEYKA_TOOLKIT_FILE));
+            wp_die(
+                'Плагин Leyka Toolkit требует PHP ' . LEYKA_TOOLKIT_MIN_PHP_VERSION . ' или выше.',
+                'Leyka Toolkit — ошибка активации',
+                ['back_link' => true]
+            );
+        }
+
+        if (version_compare($wp_version, LEYKA_TOOLKIT_MIN_WP_VERSION, '<')) {
+            deactivate_plugins(plugin_basename(LEYKA_TOOLKIT_FILE));
+            wp_die(
+                'Плагин Leyka Toolkit требует WordPress ' . LEYKA_TOOLKIT_MIN_WP_VERSION . ' или выше.',
+                'Leyka Toolkit — ошибка активации',
+                ['back_link' => true]
+            );
+        }
+
         if (!defined('LEYKA_VERSION')) {
             deactivate_plugins(plugin_basename(LEYKA_TOOLKIT_FILE));
             wp_die(
                 'Плагин Leyka Toolkit требует установленного и активного плагина Leyka.',
+                'Leyka Toolkit — ошибка активации',
+                ['back_link' => true]
+            );
+        }
+
+        if (version_compare(LEYKA_VERSION, LEYKA_TOOLKIT_MIN_LEYKA_VERSION, '<')) {
+            deactivate_plugins(plugin_basename(LEYKA_TOOLKIT_FILE));
+            wp_die(
+                'Плагин Leyka Toolkit требует Leyka ' . LEYKA_TOOLKIT_MIN_LEYKA_VERSION . ' или выше.',
                 'Leyka Toolkit — ошибка активации',
                 ['back_link' => true]
             );
