@@ -1,7 +1,7 @@
 <?php
 /*
 Plugin Name: Leyka Toolkit
-Description: Extensions for Leyka.
+Description: Extensions for Leyka. Плагин разработан при поддержке БФ <a href="https://menora-ural.ru">«Менора»</a>.
 Version: 0.3.12
 Author: StudioAVP
 Text Domain: leyka-toolkit
